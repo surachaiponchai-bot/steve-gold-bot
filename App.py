@@ -142,9 +142,9 @@ def home():
         chart_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME','steve-gold-bot.onrender.com')}/chart.png?v={int(time.time())}"
         
         return f"""
-        <h2>Steve Gold - 3 Tactics Bot (Text+Image)</h2>
+        <h2>Steve Gold - OANDA:XAUUSD 5m Text+Image</h2>
         <p>Last check: {state['last_check']}</p>
-        <p>Price: {price:.2f}</p>
+        <p>OANDA:XAUUSD Price: {price:.2f}</p>
         <img src="/chart.png?v={int(time.time())}" style="width:100%;max-width:900px;border:1px solid #444">
         <hr>
         <p><b>1. ภูเขา 53:</b> {m['sim']:.1f}% need 55% Found={m['found']}<br>{m['desc']}</p>
@@ -175,29 +175,29 @@ def test_line():
         chart_url = f"https://{base}/chart.png?v={int(time.time())}"
         
         results = []
-        results.append(send_line_text_image(f"🔔 ทดสอบบอท Steve Gold 3 ท่า (Text+Image)\nPrice ตอนนี้ {price:.2f}\n\n1.ภูเขา 53: {m['sim']:.1f}%\n2.ไม้รวย: {r['sim']}\n3.เทรน+กรอบ: {t['sim']}\n\nบอททำงานปกติ 24/7 + ส่งภาพกราฟสด", chart_url))
+        results.append(send_line_text_image(f"🔔 ทดสอบบอท Steve Gold 3 ท่า (Text+Image)\nOANDA:XAUUSD Price ตอนนี้ {price:.2f}\n\n1.ภูเขา 53: {m['sim']:.1f}%\n2.ไม้รวย: {r['sim']}\n3.เทรน+กรอบ: {t['sim']}\n\nบอททำงานปกติ 24/7 + ส่งภาพกราฟสด", chart_url))
         time.sleep(1)
-        results.append(send_line_text_image(f"🏔️ ภูเขา 53 เจอ! {m['sim']:.0f}% (ตัวอย่าง)\nPrice {price:.2f}\n{m['desc']}\nSL ใต้ภูเขา TP ยอด", chart_url))
+        results.append(send_line_text_image(f"🏔️ ภูเขา 53 เจอ! {m['sim']:.0f}% (ตัวอย่าง)\nOANDA:XAUUSD Price {price:.2f}\n{m['desc']}\nSL ใต้ภูเขา TP ยอด", chart_url))
         time.sleep(1)
-        results.append(send_line_text_image(f"🌲 ไม้รวย BUY! Score {r['sim']} (ตัวอย่าง)\nPrice {price:.2f}\n{r['desc']}", chart_url))
+        results.append(send_line_text_image(f"🌲 ไม้รวย BUY! Score {r['sim']} (ตัวอย่าง)\nOANDA:XAUUSD Price {price:.2f}\n{r['desc']}", chart_url))
         time.sleep(1)
-        results.append(send_line_text_image(f"📦 เทรน+ในกรอบ BUY! Score {t['sim']} (ตัวอย่าง)\nPrice {price:.2f}\nกรอบ {t.get('box_low',0):.2f}-{t.get('box_high',0):.2f}\n{t['desc']}", chart_url))
+        results.append(send_line_text_image(f"📦 เทรน+ในกรอบ BUY! Score {t['sim']} (ตัวอย่าง)\nOANDA:XAUUSD Price {price:.2f}\nกรอบ {t.get('box_low',0):.2f}-{t.get('box_high',0):.2f}\n{t['desc']}", chart_url))
         
-        return f"<h2>ส่ง LINE ทดสอบแล้ว 4 ชุด (ข้อความ+ภาพ)</h2><p>Price {price:.2f}</p><p>Chart: {chart_url}</p><img src='/chart.png?v={int(time.time())}' style='width:100%;max-width:900px'><pre>{chr(10).join(results)}</pre><p><a href='/home'>กลับไป /home</a></p>"
+        return f"<h2>ส่ง LINE ทดสอบแล้ว 4 ชุด (ข้อความ+ภาพ)</h2><p>OANDA:XAUUSD Price {price:.2f}</p><p>Chart: {chart_url}</p><img src='/chart.png?v={int(time.time())}' style='width:100%;max-width:900px'><pre>{chr(10).join(results)}</pre><p><a href='/home'>กลับไป /home</a></p>"
     except Exception as e:
         err = traceback.format_exc()
         return f"<pre>{err}</pre>",500
 
 def bot_loop():
     time.sleep(5)
-    log("Bot loop 3 tactics Text+Image started")
+    log("Bot loop OANDA 5m Text+Image started")
     while True:
         try:
             from detector import fetch_gold_data, check_all_patterns
             df = fetch_gold_data()
             price = float(df['Close'].iloc[-1])
             m,r,t = check_all_patterns(df)
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Price {price:.2f} | Mtn {m['sim']:.0f}% | Ruay {r['sim']} | Box {t['sim']} Found M={m['found']} R={r['found']} T={t['found']}", flush=True)
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] OANDA:XAUUSD Price {price:.2f} | Mtn {m['sim']:.0f}% | Ruay {r['sim']} | Box {t['sim']} Found M={m['found']} R={r['found']} T={t['found']}", flush=True)
             
             if m["found"] or r["found"] or t["found"]:
                 chart_path = generate_chart(df, m, r, t, f"XAUUSD {price:.2f}")
@@ -209,15 +209,15 @@ def bot_loop():
             if m["found"]:
                 base = os.environ.get('RENDER_EXTERNAL_HOSTNAME','steve-gold-bot.onrender.com')
                 chart_url = f"https://{base}/chart.png?v={int(time.time())}"
-                send_line_text_image(f"🏔️ ภูเขา 53 เจอ! {m['sim']:.0f}%\nPrice {price:.2f}\n{m['desc']}", chart_url)
+                send_line_text_image(f"🏔️ ภูเขา 53 เจอ! {m['sim']:.0f}%\nOANDA:XAUUSD Price {price:.2f}\n{m['desc']}", chart_url)
             if r["found"]:
                 base = os.environ.get('RENDER_EXTERNAL_HOSTNAME','steve-gold-bot.onrender.com')
                 chart_url = f"https://{base}/chart.png?v={int(time.time())}"
-                send_line_text_image(f"🌲 ไม้รวย BUY! Score {r['sim']}\nPrice {price:.2f}\n{r['desc']}", chart_url)
+                send_line_text_image(f"🌲 ไม้รวย BUY! Score {r['sim']}\nOANDA:XAUUSD Price {price:.2f}\n{r['desc']}", chart_url)
             if t["found"]:
                 base = os.environ.get('RENDER_EXTERNAL_HOSTNAME','steve-gold-bot.onrender.com')
                 chart_url = f"https://{base}/chart.png?v={int(time.time())}"
-                send_line_text_image(f"📦 เทรน+ในกรอบ BUY! Score {t['sim']}\nPrice {price:.2f}\nกรอบ {t['box_low']:.2f}-{t['box_high']:.2f}\n{t['desc']}", chart_url)
+                send_line_text_image(f"📦 เทรน+ในกรอบ BUY! Score {t['sim']}\nOANDA:XAUUSD Price {price:.2f}\nกรอบ {t['box_low']:.2f}-{t['box_high']:.2f}\n{t['desc']}", chart_url)
         except Exception as e:
             print(f"Loop error {e}", flush=True)
             traceback.print_exc()
@@ -225,7 +225,7 @@ def bot_loop():
 
 try:
     threading.Thread(target=bot_loop, daemon=True).start()
-    log("Thread 3 tactics Text+Image started")
+    log("Thread OANDA 5m Text+Image started")
 except Exception as e:
     log(f"Thread fail {e}")
 
