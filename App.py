@@ -7,7 +7,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import yfinance as yf
-from detector import detect_all
+from detector import detect_all, can_send, mark_sent
 
 app = Flask(__name__)
 CHART_DIR = "/tmp"
@@ -220,8 +220,14 @@ def loop():
                 if df is None: continue
                 price=float(df['Close'].iloc[-1])
                 m,r,t = detect_all(df)
-                found = (m['sim']>=55) or (r['sim']>=75) or (t['sim']>=70)
-                if found:
+                found = (m['sim']>=65) or (r['sim']>=80) or (t['sim']>=75)
+                if found and can_send(tf):
+                    mark_sent(tf)
+                else:
+                    # ไม่ส่งเพราะคะแนนต่ำหรือติด cooldown
+                    if found: log(f"Cooldown {tf} skip")
+                    continue
+                if True:
                     p=generate_vertical_chart(df,m,r,t,tf,price)
                     txt=f"[{tf}] ภูเขา {m['sim']:.0f} {m['perc']:.0f}% \nPrice {price:.2f}\n{m['start']:.2f} -> {m['end']:.2f} -> {price:.2f} สูง {m['perc']:.3f}% เหมือน {m['sim']:.0f}% [OANDA]"
                     send_line_image(txt,p,tf)
