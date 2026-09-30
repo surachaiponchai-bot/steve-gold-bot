@@ -1,113 +1,42 @@
 
-import requests, pandas as pd, numpy as np
-from datetime import datetime
-import os
+import numpy as np
+import pandas as pd
 
-def fetch_gold_data_tf(interval="5m"):
-    range_map = {"1m":"1d", "5m":"2d", "15m":"5d", "30m":"10d", "1h":"20d"}
-    rng = range_map.get(interval, "2d")
-    def try_yahoo(sym, interval_y):
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range={rng}&interval={interval_y}&includePrePost=false"
-        r = requests.get(url, headers={"User-Agent":"Mozilla/5.0"}, timeout=10)
-        if r.status_code!=200: raise Exception(f"{sym} {r.status_code}")
-        j=r.json()
-        res=j['chart']['result'][0]
-        ts=res['timestamp']
-        q=res['indicators']['quote'][0]
-        df=pd.DataFrame({'Time':pd.to_datetime(ts, unit='s'),'Open':q['open'],'High':q['high'],'Low':q['low'],'Close':q['close']}).dropna()
-        print(f"Yahoo {sym} {interval} OK {len(df)} {df['Close'].iloc[-1]:.2f}", flush=True)
-        return df
-    for sym in ["XAUUSD=X", "GC=F"]:
-        try:
-            return try_yahoo(sym, interval)
-        except Exception as e:
-            print(f"{sym} {interval} fail {e}", flush=True)
-    # mock
-    t=pd.date_range(end=datetime.now(), periods=100, freq='5min')
-    price=4220+np.cumsum(np.random.randn(100)*0.3)
-    return pd.DataFrame({'Time':t,'Open':price,'High':price+0.8,'Low':price-0.8,'Close':price})
+def detect_mountain(df, sim_thresh=55):
+    try:
+        closes=df['Close'].values
+        if len(closes)<30: return {"sim":0,"perc":0,"start":0,"end":0,"found":False}
+        # simple mountain detection
+        recent=closes[-15:]
+        mmax=recent.max(); mmin=recent.min()
+        # similarity crude
+        sim = 80 if (mmax-mmin)/mmin*100 > 1 else 20
+        return {"sim":sim,"perc":(mmax-mmin)/mmin*100,"start":recent[0],"end":recent[-1],"found":sim>=sim_thresh}
+    except:
+        return {"sim":0,"perc":0,"start":0,"end":0,"found":False}
 
-def fetch_gold_data(period='2d', interval='5m'):
-    return fetch_gold_data_tf(interval=interval)
+def detect_ruay(df):
+    try:
+        # count bullish/bearish
+        c=df['Close'].values
+        bullish = np.sum(np.diff(c)>0)
+        score = bullish/len(c)*100
+        return {"sim":int(score)}
+    except:
+        return {"sim":0}
 
-def detect_mountain(df, need=53, threshold=55):
-    if len(df) < need: return {"found":False, "sim":0, "desc":f"data {len(df)}<{need}"}
-    closes=df['Close'].values[-need:]
-    ideal=np.concatenate([np.linspace(0,1,need//2), np.linspace(1,0,need-need//2)])
-    c_norm=(closes-closes.min())/(closes.max()-closes.min()+1e-9)
-    corr=np.corrcoef(c_norm, ideal)[0,1]
-    sim=float(corr*100) if not np.isnan(corr) else 0
-    low1=closes[0]; high=closes.max(); low2=closes[-1]
-    height=(high-min(low1,low2))/min(low1,low2)*100
-    found=sim>=threshold and height>0.15
-    return {"found":found,"sim":sim,"desc":f"{need} แท่ง {low1:.2f} -> {high:.2f} -> {low2:.2f} สูง {height:.3f}% เหมือน {sim:.0f}% [OANDA]","height":height}
+def detect_box(df):
+    try:
+        closes=df['Close'].values[-20:]
+        high=closes.max(); low=closes.min()
+        perc = (high-low)/low*100
+        sim = 70 if perc<0.5 else 30
+        return {"sim":sim,"box_low":low,"box_high":high,"perc":perc}
+    except:
+        return {"sim":0,"box_low":0,"box_high":0,"perc":0}
 
-def detect_mai_ruay(df):
-    if len(df)<20: return {"found":False,"sim":0,"desc":"data น้อย"}
-    last=df.iloc[-1]; prev=df.iloc[-2]; recent5=df.iloc[-6:-1]; recent10=df.iloc[-11:-1]
-    drop_pct=(recent5['Close'].iloc[0]-recent5['Low'].min())/recent5['Close'].iloc[0]*100
-    avg_range=(df['High']-df['Low']).tail(20).mean()
-    big_red=(recent5['Open']>recent5['Close']).sum()>=3
-    big_drop=drop_pct>0.30 or (prev['High']-prev['Low'])>avg_range*1.8
-    def is_pin(candle):
-        body=abs(candle['Close']-candle['Open']); total=candle['High']-candle['Low']
-        if total==0: return False
-        lower_wick=min(candle['Open'], candle['Close'])-candle['Low']
-        return lower_wick/total>0.55 and total>avg_range*0.8
-    pin_last=is_pin(last); pin_prev=is_pin(prev)
-    lowest_10=recent10['Low'].min()
-    sweep=last['Low']<lowest_10 or prev['Low']<lowest_10
-    bullish=last['Close']>last['Open'] and last['Close']>prev['Open']*0.999
-    engulfing=last['Close']>last['Open'] and prev['Close']<prev['Open'] and last['Close']>prev['Open'] and last['Open']<prev['Close']
-    closes=df['Close'].values[-14:]; gains=np.maximum(np.diff(closes),0).mean(); losses=abs(np.minimum(np.diff(closes),0).mean())+1e-9; rs=gains/losses; rsi=100-(100/(1+rs))
-    score=0
-    if big_drop: score+=30
-    if big_red: score+=10
-    if pin_last or pin_prev: score+=35
-    if sweep: score+=15
-    if bullish or engulfing: score+=20
-    if rsi<50: score+=10
-    if rsi<40: score+=5
-    found=score>=75 and (pin_last or pin_prev) and (bullish or engulfing) and sweep
-    return {"found":found,"sim":score,"desc":f"ไม้รวย [OANDA]: ลง {drop_pct:.2f}% ไส้ยาว {pin_last or pin_prev} กวาดLow {sweep} กลับตัว {bullish or engulfing} RSI {rsi:.1f} score {score}","rsi":rsi}
-
-def detect_trend_in_box(df):
-    if len(df)<50: return {"found":False,"sim":0,"desc":"data น้อย <50"}
-    closes=df['Close'].values; highs=df['High'].values; lows=df['Low'].values
-    def ema(arr, period): return pd.Series(arr).ewm(span=period, adjust=False).mean().values
-    ema20=ema(closes,20); ema50=ema(closes,50); price_now=closes[-1]
-    up_trend=price_now>ema20[-1] and price_now>ema50[-1]
-    rise_30=(closes[-1]-closes[-30])/closes[-30]*100 if len(closes)>=30 else 0
-    strong_up=rise_30>0.8
-    box_len=12; box=df.iloc[-box_len-1:-1]; box_high=box['High'].max(); box_low=box['Low'].min(); box_range=box_high-box_low; box_range_pct=box_range/box_low*100
-    avg_range=(df['High']-df['Low']).tail(30).mean()
-    is_box=box_range_pct<0.45 and box_range<avg_range*3.0 and box_range_pct>0.05
-    before_box=df.iloc[-box_len-6:-box_len-1]
-    big_up_candle=(before_box['High'].max()-before_box['Low'].min())>avg_range*2.5 if len(before_box)>=3 else False
-    last=df.iloc[-1]; prev=df.iloc[-2]
-    near_support=last['Low']<=box_low*1.0015 and last['Low']>=box_low*0.998
-    touched_support=(last['Low']<=box_low+box_range*0.15) or (prev['Low']<=box_low+box_range*0.15)
-    def is_bullish_pin(c):
-        total=c['High']-c['Low']
-        if total==0: return False
-        lower_wick=min(c['Open'], c['Close'])-c['Low']
-        return lower_wick/total>0.4 and c['Close']>c['Open']
-    pin=is_bullish_pin(last) or is_bullish_pin(prev)
-    bullish_close=last['Close']>last['Open'] and last['Close']>box_low
-    score=0
-    if up_trend: score+=25
-    if strong_up: score+=20
-    if is_box: score+=25
-    if big_up_candle: score+=10
-    if touched_support: score+=15
-    if near_support: score+=10
-    if pin: score+=15
-    if bullish_close: score+=10
-    found=up_trend and is_box and touched_support and bullish_close and score>=70
-    return {"found":found,"sim":score,"desc":f"เทรน+กรอบ [OANDA]: เทรนขึ้น {up_trend} ขึ้น {rise_30:.2f}% กรอบ {box_range_pct:.3f}% ({box_low:.2f}-{box_high:.2f}) สดใหม่ {big_up_candle} แตะรับล่าง {touched_support} pin {pin} score {score}","box_low":box_low,"box_high":box_high,"rise":rise_30}
-
-def check_all_patterns(df):
-    m=detect_mountain(df, need=53, threshold=55)
-    r=detect_mai_ruay(df)
-    t=detect_trend_in_box(df)
+def detect_all(df):
+    m=detect_mountain(df)
+    r=detect_ruay(df)
+    t=detect_box(df)
     return m,r,t
