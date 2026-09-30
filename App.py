@@ -15,13 +15,19 @@ os.makedirs(CHART_DIR, exist_ok=True)
 
 def log(msg): print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
-LINE_TOKEN = os.getenv("LINE_CHANNEL_TOKEN") or os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+LINE_TOKEN_ENV = os.getenv("LINE_CHANNEL_TOKEN") or os.getenv("LINE_CHANNEL_ACCESS_TOKEN") or os.getenv("LINE_TOKEN")
+LINE_TOKEN = LINE_TOKEN_ENV
 LINE_API = "https://api.line.me/v2/bot/message/push"
-MY_USER_ID = "U9a7e3d2b1c8f4e6d5a3b2c1d0e9f8a7b"
+MY_USER_ID = os.getenv("LINE_USER_ID") or "U9a7e3d2b1c8f4e6d5a3b2c1d0e9f8a7b"
+LINE_TOKEN_ENV = os.getenv("LINE_CHANNEL_TOKEN") or os.getenv("LINE_CHANNEL_ACCESS_TOKEN") or os.getenv("LINE_TOKEN")
+LINE_TOKEN = LINE_TOKEN_ENV or os.getenv("LINE_TOKEN")
 
 def send_line_image(text, image_path, tf_label):
     try:
         import requests
+        global LINE_TOKEN
+        LINE_TOKEN = os.getenv("LINE_CHANNEL_TOKEN") or os.getenv("LINE_CHANNEL_ACCESS_TOKEN") or os.getenv("LINE_TOKEN") or LINE_TOKEN
+        MY_UID = os.getenv("LINE_USER_ID") or MY_USER_ID
         if not LINE_TOKEN:
             log(f"LINE token missing"); return False
         # upload image URL - Render serves /tmp via /chart_*.png route
@@ -30,7 +36,7 @@ def send_line_image(text, image_path, tf_label):
         url = f"{base_url}/chart_{tf_label}.png?v={int(time.time())}"
         # LINE needs https image
         payload = {
-            "to": MY_USER_ID,
+            "to": os.getenv("LINE_USER_ID") or MY_USER_ID,
             "messages": [
                 {"type": "text", "text": text},
                 {"type": "image", "originalContentUrl": url, "previewImageUrl": url}
