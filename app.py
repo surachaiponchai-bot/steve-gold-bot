@@ -1,10 +1,8 @@
-
 import os, time, threading
 from datetime import datetime
 from flask import Flask
 import yfinance as yf
 
-# Env vars from Render
 LINE_CHANNEL_TOKEN = os.getenv("LINE_CHANNEL_TOKEN", "")
 LINE_USER_ID = os.getenv("LINE_USER_ID", "")
 CANDLE_COUNT = int(os.getenv("CANDLE_COUNT", "53"))
@@ -19,7 +17,6 @@ from pattern_detector import check_53_mountain
 from line_sender import send_line_text_and_image
 import config
 
-# Override config with env
 config.LINE_CHANNEL_TOKEN = LINE_CHANNEL_TOKEN
 config.LINE_USER_ID = LINE_USER_ID
 
@@ -51,28 +48,32 @@ def bot_loop():
             if result['found'] and result['similarity'] >= PATTERN_THRESHOLD:
                 chart_path = f"/tmp/chart_53_{datetime.now().strftime('%Y%m%d_%H%M')}.png"
                 generate_chart_image_53(df_53, chart_path, result)
-                msg = f"""🏔️ Steve Gold - ภูเขา 53 แท่ง พบ! (Cloud)
+                msg = f"""\U0001f3d4\ufe0f Steve Gold - \u0e20\u0e39\u0e40\u0e02\u0e32 53 \u0e41\u0e17\u0e48\u0e07 \u0e1e\u0e1a! (Cloud)
 
-ความเหมือน: {result['similarity']:.0f}% (เป้า {PATTERN_THRESHOLD}%)
+\u0e04\u0e27\u0e32\u0e21\u0e40\u0e2b\u0e21\u0e37\u0e2d\u0e19: {result['similarity']:.0f}% (\u0e40\u0e1b\u0e49\u0e32 {PATTERN_THRESHOLD}%)
 Price: ${current_price:.2f}
 Time: {datetime.now().strftime('%d/%m/%Y %H:%M')}
-ภูเขา: {result['valley1']:.2f} -> {result['peak']:.2f} -> {result['valley2']:.2f}
-สูง: {result['height_pct']:.3f}%
+\u0e20\u0e39\u0e40\u0e02\u0e32: {result['valley1']:.2f} -> {result['peak']:.2f} -> {result['valley2']:.2f}
+\u0e2a\u0e39\u0e07: {result['height_pct']:.3f}%
 Corr: {result.get('correlation',0):.0f}% peak@{result.get('peak_position',-1)}
 
-Cloud bot ตรวจ 53 แท่งปัจจุบันเป็นภูเขา!
+Cloud bot \u0e15\u0e23\u0e27\u0e08 53 \u0e41\u0e17\u0e48\u0e07\u0e1b\u0e31\u0e08\u0e08\u0e38\u0e1a\u0e31\u0e19\u0e40\u0e1b\u0e47\u0e19\u0e20\u0e39\u0e40\u0e02\u0e32!
 
-Signal: BUY/SELL ตามฐาน"""
+Signal: BUY/SELL \u0e15\u0e32\u0e21\u0e10\u0e32\u0e19"""
                 print("SENDING ALERT to LINE...")
                 send_line_text_and_image(msg, chart_path)
-            # sleep
             time.sleep(CHECK_INTERVAL_MINUTES*60)
         except Exception as e:
             print(f"Loop error: {e}")
             import traceback; traceback.print_exc()
             time.sleep(60)
 
-@app.route("/")
+@app.route("/", methods=['GET', 'POST'])
+@app.route("/callback", methods=['GET', 'POST'])
+def callback():
+    return 'OK', 200
+
+@app.route("/home", methods=['GET', 'POST'])
 def home():
     return f"""
     <h1>Steve Gold - 53 Candles Mountain Bot (Cloud)</h1>
@@ -87,11 +88,10 @@ def home():
     <p>Bot is running 24/7 on cloud - no need to keep PC on!</p>
     """
 
-@app.route("/test")
+@app.route("/test", methods=['GET', 'POST'])
 def test_alert():
-    # บังคับส่งทดสอบ
     try:
-        msg = f"🧪 Test from Cloud Bot - {datetime.now().strftime('%H:%M:%S')} - Token OK: {bool(LINE_CHANNEL_TOKEN)} Price check OK"
+        msg = f"\U0001f9ea Test from Cloud Bot - {datetime.now().strftime('%H:%M:%S')} - Token OK: {bool(LINE_CHANNEL_TOKEN)} Price check OK"
         from line_sender import send_line_text
         send_line_text(msg)
         return f"Test sent! Token len {len(LINE_CHANNEL_TOKEN)}"
@@ -99,9 +99,7 @@ def test_alert():
         return f"Error: {e}"
 
 if __name__ == "__main__":
-    # Start bot in background thread
     t = threading.Thread(target=bot_loop, daemon=True)
     t.start()
-    # Start Flask web server (Render needs this)
     port = int(os.getenv("PORT", "10000"))
     app.run(host="0.0.0.0", port=port)
