@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: steve-gold-53mountain
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: LINE_CHANNEL_TOKEN
+        sync: false
+      - key: LINE_USER_ID
+        sync: false
+      - key: CANDLE_COUNT
+        value: 53
+      - key: PATTERN_THRESHOLD
+        value: 55
+      - key: CHECK_INTERVAL_MINUTES
+        value: 5
