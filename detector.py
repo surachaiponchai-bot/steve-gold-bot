@@ -1,9 +1,8 @@
 
 import numpy as np, os, time, json
-from datetime import datetime
 
-COOLDOWN_FILE = "/tmp/last_send.json"
-COOLDOWN_MIN = 15  # ส่งซ้ำได้ทุก 15 นาทีต่อ TF
+COOLDOWN_FILE = "/tmp/last_send_m5.json"
+COOLDOWN_MIN = 15
 
 def can_send(tf):
     try:
@@ -17,56 +16,64 @@ def mark_sent(tf):
     try:
         data={}
         if os.path.exists(COOLDOWN_FILE):
-            data=json.load(open(COOLDOWN_FILE))
+            try: data=json.load(open(COOLDOWN_FILE))
+            except: pass
         data[tf]=time.time()
         json.dump(data, open(COOLDOWN_FILE,'w'))
     except: pass
 
-def detect_mountain(df, sim_thresh=55):
+def detect_mountain(df):
+    """ท่าที่ 1: ภูเขา - V Shape เด้งขึ้น"""
     try:
         closes=df['Close'].values
-        if len(closes)<30: return {"sim":0,"perc":0,"start":0,"end":0,"found":False}
-        recent=closes[-30:]
-        # หา V shape จริงๆ ไม่ใช่ส่งมั่ว
+        if len(closes)<30: return {"name":"ภูเขา","sim":0,"perc":0,"found":False}
+        recent=closes[-25:]
         mid=np.argmin(recent)
-        left=recent[:mid].max() if mid>5 else 0
-        right=recent[mid+1:].max() if mid < len(recent)-5 else 0
+        if mid<5 or mid>20: return {"name":"ภูเขา","sim":0,"perc":0,"found":False}
+        left_max=recent[:mid].max()
+        right_max=recent[mid+1:].max()
         bottom=recent[mid]
-        if left==0 or right==0: return {"sim":0,"perc":0,"start":0,"end":0,"found":False}
-        up1=(left-bottom)/bottom*100
-        up2=(right-bottom)/bottom*100
-        # ต้องเป็นภูเขาจริงขึ้นมากกว่า 0.2%
-        if up1<0.15 or up2<0.15: return {"sim":0,"perc":0,"start":left,"end":right,"found":False}
-        sim = min(95, 60+ up1*10 + up2*10)
-        return {"sim":int(sim),"perc":max(up1,up2),"start":left,"end":right,"found":sim>=60}
-    except:
-        return {"sim":0,"perc":0,"start":0,"end":0,"found":False}
+        up_left=(left_max-bottom)/bottom*100
+        up_right=(right_max-bottom)/bottom*100
+        if up_left<0.12 or up_right<0.12: return {"name":"ภูเขา","sim":0,"perc":max(up_left,up_right),"found":False}
+        sim = min(95, 65 + (up_left+up_right)*30)
+        return {"name":"ภูเขา","sim":int(sim),"perc":max(up_left,up_right),"start":left_max,"end":right_max,"found":sim>=65}
+    except Exception as e:
+        return {"name":"ภูเขา","sim":0,"perc":0,"found":False}
 
 def detect_ruay(df):
+    """ท่าที่ 2: ไม้รวย - แท่งใหญ่ต่อเนื่อง"""
     try:
-        # ต้องเป็นแท่งยาวจริง ไม่ใช่ส่งทุกอัน
-        c=df['Close'].values[-5:]
-        o=df['Open'].values[-5:] if 'Open' in df.columns else c
-        big = 0
-        for i in range(len(c)):
-            body=abs(c[i]-o[i])/o[i]*100 if o[i]!=0 else 0
-            if body>0.15: big+=1
-        score = 50 if big>=2 else 0
-        return {"sim":int(score)}
+        closes=df['Close'].values[-6:]
+        opens=df['Open'].values[-6:] if 'Open' in df.columns else closes
+        big_count=0
+        total_body=0
+        for i in range(len(closes)):
+            body=abs(closes[i]-opens[i])/opens[i]*100 if opens[i]!=0 else 0
+            total_body+=body
+            if body>0.18: big_count+=1
+        if big_count<2: return {"name":"ไม้รวย","sim":0,"perc":total_body,"found":False}
+        sim = 75 + big_count*10 + total_body*20
+        return {"name":"ไม้รวย","sim":int(min(95,sim)),"perc":total_body,"found":sim>=80}
     except:
-        return {"sim":0}
+        return {"name":"ไม้รวย","sim":0,"perc":0,"found":False}
 
 def detect_box(df):
+    """ท่าที่ 3: กรอบแตก - Sideway แคบแล้วเบรก"""
     try:
         closes=df['Close'].values[-20:]
         high=closes.max(); low=closes.min()
         perc=(high-low)/low*100
-        # กรอบต้องแคบมาก <0.15% ถึงจะน่าเทรด
-        if perc>0.2: return {"sim":0,"box_low":low,"box_high":high,"perc":perc}
-        sim=80 if perc<0.12 else 60
-        return {"sim":sim,"box_low":low,"box_high":high,"perc":perc}
+        if perc>0.18: return {"name":"กรอบแตก","sim":0,"perc":perc,"box_low":low,"box_high":high,"found":False}
+        # ถ้าแคบมากแล้วแท่งสุดท้ายเบรกแรง
+        last=closes[-1]
+        prev_avg=np.mean(closes[-6:-1])
+        break_strength=abs(last-prev_avg)/prev_avg*100
+        sim = 70 if perc<0.14 else 50
+        if break_strength>0.08: sim+=15
+        return {"name":"กรอบแตก","sim":int(min(95,sim)),"perc":perc,"box_low":low,"box_high":high,"found":sim>=75}
     except:
-        return {"sim":0,"box_low":0,"box_high":0,"perc":0}
+        return {"name":"กรอบแตก","sim":0,"perc":0,"box_low":0,"box_high":0,"found":False}
 
 def detect_all(df):
     m=detect_mountain(df)
