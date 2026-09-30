@@ -1,192 +1,166 @@
 
-from flask import Flask, send_file
-import os, time, threading, traceback
+import os, time, traceback
 from datetime import datetime
+from flask import Flask, send_from_directory
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import yfinance as yf
+from detector import detect_all
 
 app = Flask(__name__)
 CHART_DIR = "/tmp"
-TIMEFRAMES = ["1m", "5m", "15m", "30m"]
+os.makedirs(CHART_DIR, exist_ok=True)
 
-def log(msg): print(msg, flush=True)
+def log(msg): print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
-def generate_chart_tf(df, m, r, t, tf_label, price):
+LINE_TOKEN = os.getenv("LINE_CHANNEL_TOKEN") or os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+LINE_API = "https://api.line.me/v2/bot/message/push"
+MY_USER_ID = "U9a7e3d2b1c8f4e6d5a3b2c1d0e9f8a7b"
+
+def send_line_image(text, image_path, tf_label):
     try:
-        from detector import fetch_gold_data
-        plot_df = df.tail(60).copy().reset_index(drop=True)
+        import requests
+        if not LINE_TOKEN:
+            log(f"LINE token missing"); return False
+        # upload image URL - Render serves /tmp via /chart_*.png route
+        base_url = "https://steve-gold-bot.onrender.com"
+        # cache bust
+        url = f"{base_url}/chart_{tf_label}.png?v={int(time.time())}"
+        # LINE needs https image
+        payload = {
+            "to": MY_USER_ID,
+            "messages": [
+                {"type": "text", "text": text},
+                {"type": "image", "originalContentUrl": url, "previewImageUrl": url}
+            ]
+        }
+        headers = {"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"}
+        r = requests.post(LINE_API, json=payload, headers=headers, timeout=15)
+        log(f"PUSH {tf_label} {r.status_code} {r.text[:200]}")
+        return r.status_code==200
+    except Exception as e:
+        log(f"PUSH err {e}"); return False
+
+def fetch_yahoo(interval):
+    try:
+        ticker = yf.Ticker("GC=F")
+        # mapping interval: 1m->1m, 5m->5m, 15m->15m, 30m->30m
+        df = ticker.history(period="2d", interval=interval, auto_adjust=False)
+        if df.empty: return None
+        df = df.rename(columns={"Open":"Open","High":"High","Low":"Low","Close":"Close"})
+        # simple RSI
+        import pandas as pd
+        delta = df['Close'].diff()
+        gain = (delta.where(delta>0,0)).rolling(14).mean()
+        loss = (-delta.where(delta<0,0)).rolling(14).mean()
+        rs = gain/loss
+        df['RSI'] = 100 - (100/(1+rs))
+        return df.tail(100)
+    except Exception as e:
+        log(f"Yahoo {interval} fail {e}"); return None
+
+def generate_vertical_chart(df, m, r, t, tf_label, price):
+    try:
+        plot_df = df.tail(80).copy().reset_index(drop=True)
         path = f"{CHART_DIR}/chart_{tf_label}.png"
-        fig, ax = plt.subplots(figsize=(14,6), dpi=200)
-        fig.patch.set_facecolor('#0a0a0a')
-        ax.set_facecolor('#0a0a0a')
+        # *** iPhone 17 Pro Max Vertical 1290x2796 ***
+        fig = plt.figure(figsize=(6.5, 14), dpi=200)  # 1300x2800 vertical
+        fig.patch.set_facecolor('black')
+        gs = fig.add_gridspec(3,1, height_ratios=[3,0.5,1], hspace=0.25)
+        ax = fig.add_subplot(gs[0,0])
+        ax_rsi = fig.add_subplot(gs[2,0])
+        ax.set_facecolor('black')
+        ax_rsi.set_facecolor('black')
         for i in range(len(plot_df)):
             o=float(plot_df['Open'].iloc[i]); h=float(plot_df['High'].iloc[i]); l=float(plot_df['Low'].iloc[i]); c=float(plot_df['Close'].iloc[i])
-            is_bull=c>=o; color='#26a69a' if is_bull else '#ef5350'
-            ax.plot([i,i],[l,h], color=color, linewidth=1, alpha=0.9, zorder=1)
-            body_bottom=min(o,c); body_height=abs(c-o)
-            if body_height < (h-l)*0.05:
-                body_height=(h-l)*0.05; body_bottom=(o+c)/2-body_height/2
-            rect=mpatches.Rectangle((i-0.3, body_bottom),0.6, body_height if body_height>0 else 0.2, facecolor=color, edgecolor=color, linewidth=1, zorder=2, alpha=0.95)
+            is_bull=c>=o
+            color='#00ffcc' if is_bull else '#ff3b5c'
+            ax.plot([i,i],[l,h], color=color, linewidth=0.9)
+            body_bottom=min(o,c); body_h=abs(c-o)
+            if body_h==0: body_h=0.3
+            rect=mpatches.Rectangle((i-0.35, body_bottom),0.7, body_h, facecolor=color, edgecolor=color)
             ax.add_patch(rect)
-        closes=plot_df['Close'].values
-        ax.plot(closes, color='#FFD700', linewidth=1, alpha=0.4, zorder=0)
-        try:
-            import pandas as pd
-            ema20=pd.Series(closes).ewm(span=20).mean().values
-            ema50=pd.Series(closes).ewm(span=50).mean().values
-            ax.plot(ema20, color='#2196F3', linewidth=1, alpha=0.7, label='EMA20')
-            ax.plot(ema50, color='#FF9800', linewidth=1, alpha=0.7, label='EMA50')
-        except: pass
-        if t and 'box_low' in t and t.get('sim',0)>20:
+        # Box
+        if t and 'box_low' in t:
             try:
-                box_low=float(t['box_low']); box_high=float(t['box_high']); box_len=12; start_idx=len(plot_df)-box_len-1
-                ax.fill_between([start_idx, len(plot_df)-1], box_low, box_high, color='#00e5ff', alpha=0.12, label=f"BOX {box_low:.1f}-{box_high:.1f}")
-                ax.plot([start_idx, len(plot_df)-1],[box_low,box_low], color='#00e5ff', linestyle='--', linewidth=1.5, alpha=0.9)
-                ax.plot([start_idx, len(plot_df)-1],[box_high,box_high], color='#00e5ff', linestyle='--', linewidth=1.5, alpha=0.9)
+                bl=float(t['box_low']); bh=float(t['box_high']); s=len(plot_df)-15
+                ax.fill_between([s, len(plot_df)], bl, bh, color='#00e5ff', alpha=0.18)
+                ax.plot([s, len(plot_df)],[bl,bl], color='#00e5ff', ls='--', lw=1.2)
+                ax.plot([s, len(plot_df)],[bh,bh], color='#00e5ff', ls='--', lw=1.2)
             except: pass
-        ax.set_title(f"{tf_label} | OANDA:XAUUSD {tf_label} | Price {price:.2f} | Mtn {m['sim']:.0f}% | Ruay {r['sim']} | Box {t['sim']} | {datetime.now().strftime('%H:%M:%S')}", color='white', fontsize=11, fontweight='bold', loc='left')
-        ax.grid(True, alpha=0.15, color='gray', linestyle='--')
-        ax.tick_params(colors='white', labelsize=8)
-        for spine in ax.spines.values(): spine.set_color('#333333')
-        legend=ax.legend(facecolor='#1a1a1a', edgecolor='#444444', fontsize=8, loc='upper left')
-        for text in legend.get_texts(): text.set_color('white')
+        ax.set_title(f"{tf_label} Price {price:.2f} M{m['sim']:.0f}% R{r['sim']} T{t['sim']} \nXAUUSD Multi TF Vertical iPhone 17 Pro Max", color='white', fontsize=13, loc='left')
+        ax.grid(True, alpha=0.15, ls='--')
+        ax.tick_params(colors='white', labelsize=9)
         ax.set_xlim(-1, len(plot_df))
-        low=plot_df['Low'].min(); high=plot_df['High'].max(); pad=(high-low)*0.15
-        ax.set_ylim(low-pad, high+pad)
+        ax.set_xticks([])
+        if 'RSI' in plot_df.columns:
+            ax_rsi.plot(plot_df['RSI'], color='#ff4444', lw=1.5)
+            ax_rsi.axhline(70, color='white', ls='--', alpha=0.3); ax_rsi.axhline(30, color='white', ls='--', alpha=0.3)
+            ax_rsi.set_ylim(0,100)
+            ax_rsi.set_title(f"RSI(14) {plot_df['RSI'].iloc[-1]:.2f}", color='white', fontsize=12, loc='left')
+            ax_rsi.tick_params(colors='white')
         plt.tight_layout()
-        plt.savefig(path, facecolor='#0a0a0a', bbox_inches='tight')
+        plt.savefig(path, facecolor='black', dpi=200)
         plt.close()
-        log(f"Chart {tf_label} saved {path}")
+        log(f"VERTICAL Chart {tf_label} saved {path}")
         return path
     except Exception as e:
-        log(f"Chart {tf_label} error {e}")
-        traceback.print_exc()
-        return None
+        log(f"Chart {tf_label} err {e} {traceback.format_exc()}"); return None
 
-def send_line_text_image(text_msg, chart_url=None):
-    try:
-        import requests
-        token=os.environ.get("LINE_TOKEN") or os.environ.get("LINE_CHANNEL_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_ACCESS_TOKEN")
-        user_id=os.environ.get("LINE_USER_ID") or os.environ.get("LINE_USER_ID_TO")
-        if not token or not user_id: return "No token/user"
-        headers={"Authorization": f"Bearer {token}", "Content-Type":"application/json"}
-        url="https://api.line.me/v2/bot/message/push"
-        messages=[{"type":"text","text":text_msg}]
-        if chart_url:
-            messages.append({"type":"image","originalContentUrl": chart_url,"previewImageUrl": chart_url})
-        data={"to": user_id, "messages": messages}
-        r=requests.post(url, headers=headers, json=data, timeout=15)
-        log(f"LINE {tf_label if 'tf_label' in locals() else ''} {r.status_code}")
-        return f"LINE {r.status_code}"
-    except Exception as e:
-        log(f"LINE err {e}")
-        return str(e)
-
-def send_line_multi(text, tf_label):
-    try:
-        import requests
-        token=os.environ.get("LINE_TOKEN") or os.environ.get("LINE_CHANNEL_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN"); user_id=os.environ.get("LINE_USER_ID") or os.environ.get("USER_ID")
-        if not token or not user_id: return
-        headers={"Authorization": f"Bearer {token}", "Content-Type":"application/json"}
-        base=os.environ.get('RENDER_EXTERNAL_HOSTNAME','steve-gold-bot.onrender.com')
-        chart_url=f"https://{base}/chart_{tf_label}.png?v={int(time.time())}"
-        url="https://api.line.me/v2/bot/message/push"
-        messages=[{"type":"text","text":text},{"type":"image","originalContentUrl": chart_url,"previewImageUrl": chart_url}]
-        data={"to": user_id, "messages": messages}
-        r=requests.post(url, headers=headers, json=data, timeout=15)
-        log(f"PUSH {tf_label} {r.status_code}")
-    except Exception as e:
-        log(f"send multi err {e}")
-
+# Flask routes
 @app.route('/')
-def root(): return "Multi TF Bot M1 M5 M15 M30 - /home"
-
+def home(): return "Steve Gold Bot Vertical iPhone 17 Pro Max is live"
+@app.route('/<path:filename>')
+def serve_chart(filename):
+    return send_from_directory(CHART_DIR, filename)
 @app.route('/home')
-def home():
-    try:
-        from detector import fetch_gold_data_tf, check_all_patterns
-        html="<h2>Steve Gold - Multi TF M1 M5 M15 M30 CANDLESTICK</h2>"
-        for tf in TIMEFRAMES:
-            df=fetch_gold_data_tf(interval=tf)
-            price=float(df['Close'].iloc[-1])
-            m,r,t=check_all_patterns(df)
-            generate_chart_tf(df,m,r,t,tf,price)
-            html+=f"<h3>{tf} Price {price:.2f} Mtn {m['sim']:.0f}% R {r['sim']} T {t['sim']} Found {m['found']}/{r['found']}/{t['found']}</h3>"
-            html+=f"<img src='/chart_{tf}.png?v={int(time.time())}' style='width:100%;max-width:1100px;border:1px solid #444'><hr>"
-        html+=f"<p><a href='/test_line' style='background:green;color:white;padding:10px 20px;text-decoration:none'>ทดสอบส่ง LINE Multi TF</a></p>"
-        return html
-    except Exception as e:
-        return f"<pre>{traceback.format_exc()}</pre>",500
-
-@app.route('/chart_<tf>.png')
-def chart_tf(tf):
-    try:
-        p=f"{CHART_DIR}/chart_{tf}.png"
-        if os.path.exists(p): return send_file(p, mimetype='image/png')
-        return "No chart",404
-    except Exception as e: return str(e),500
-
-@app.route('/chart.png')
-def chart_default():
-    return chart_tf('5m')
-
+def home2(): 
+    # show all 4 charts
+    html="<html><body style='background:black;color:white'><h1>Vertical iPhone 17 Pro Max Charts</h1>"
+    for tf in ["1m","5m","15m","30m"]:
+        html+=f"<h2>{tf}</h2><img src='/chart_{tf}.png?v={int(time.time())}' style='width:350px'><br>"
+    html+="</body></html>"
+    return html
 @app.route('/test_line')
 def test_line():
-    try:
-        from detector import fetch_gold_data_tf, check_all_patterns
-        res=[]
-        for tf in TIMEFRAMES:
-            df=fetch_gold_data_tf(interval=tf)
-            price=float(df['Close'].iloc[-1])
-            m,r,t=check_all_patterns(df)
-            generate_chart_tf(df,m,r,t,tf,price)
-            time.sleep(1)
-            base=os.environ.get('RENDER_EXTERNAL_HOSTNAME','steve-gold-bot.onrender.com')
-            chart_url=f"https://{base}/chart_{tf}.png?v={int(time.time())}"
-            txt=f"🔔 {tf} TEST CANDLE\nOANDA:XAUUSD {tf} Price {price:.2f}\nภูเขา {m['sim']:.0f}% ไม้รวย {r['sim']} เทรน+กรอบ {t['sim']}\nบอท Multi TF ทำงานปกติ"
-            import requests
-            token=os.environ.get("LINE_TOKEN") or os.environ.get("LINE_CHANNEL_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN"); user_id=os.environ.get("LINE_USER_ID") or os.environ.get("USER_ID")
-            headers={"Authorization": f"Bearer {token}", "Content-Type":"application/json"}
-            data={"to": user_id, "messages": [{"type":"text","text":txt},{"type":"image","originalContentUrl": chart_url,"previewImageUrl": chart_url}]}
-            r=requests.post("https://api.line.me/v2/bot/message/push", headers=headers, json=data, timeout=15)
-            res.append(f"{tf} LINE {r.status_code}")
-        return f"<h2>ส่ง Multi TF แล้ว</h2><pre>{chr(10).join(res)}</pre><a href='/home'>home</a>"
-    except Exception as e:
-        return f"<pre>{traceback.format_exc()}</pre>",500
+    results=[]
+    for tf in ["15m","30m","5m","1m"]:
+        df=fetch_yahoo(tf)
+        if df is None: 
+            results.append(f"{tf} no data"); continue
+        price=float(df['Close'].iloc[-1])
+        m,r,t = detect_all(df)
+        # for test force Found True to see vertical
+        txt=f"{tf} TEST VERTICAL iPhone 17 Pro Max\nOANDA:XAUUSD {tf} Price {price:.2f}\nภูเขา {m['sim']:.0f}% ไม้รวย {r['sim']} เทรน+กรอบ {t['sim']}\nบอท Multi TF แนวตั้ง"
+        p=generate_vertical_chart(df,m,r,t,tf,price)
+        ok=send_line_image(txt, p, tf)
+        results.append(f"{tf} push {ok}")
+    return "<br>".join(results)
 
-def bot_loop():
+# background loop
+import threading
+def loop():
     time.sleep(5)
-    log("Multi TF bot loop M1 M5 M15 M30 started")
     while True:
         try:
-            from detector import fetch_gold_data_tf, check_all_patterns
-            for tf in TIMEFRAMES:
-                try:
-                    df=fetch_gold_data_tf(interval=tf)
-                    price=float(df['Close'].iloc[-1])
-                    m,r,t=check_all_patterns(df)
-                    log(f"[{tf}] Price {price:.2f} M{m['sim']:.0f}% R{r['sim']} T{t['sim']} Found {m['found']}/{r['found']}/{t['found']}")
-                    if m['found'] or r['found'] or t['found']:
-                        generate_chart_tf(df,m,r,t,tf,price)
-                        time.sleep(2)
-                        base=os.environ.get('RENDER_EXTERNAL_HOSTNAME','steve-gold-bot.onrender.com')
-                        chart_url=f"https://{base}/chart_{tf}.png?v={int(time.time())}"
-                        if m['found']:
-                            send_line_multi(f"🏔️ [{tf}] ภูเขา 53 {m['sim']:.0f}%\nPrice {price:.2f}\n{m['desc']}", tf)
-                        if r['found']:
-                            send_line_multi(f"🌲 [{tf}] ไม้รวย BUY Score {r['sim']}\nPrice {price:.2f}\n{r['desc']}", tf)
-                        if t['found']:
-                            send_line_multi(f"📦 [{tf}] เทรน+ในกรอบ BUY Score {t['sim']}\nPrice {price:.2f}\nกรอบ {t.get('box_low',0):.2f}-{t.get('box_high',0):.2f}\n{t['desc']}", tf)
-                except Exception as e:
-                    log(f"TF {tf} loop err {e}")
-                time.sleep(5)
+            for tf in ["1m","5m","15m","30m"]:
+                df=fetch_yahoo(tf)
+                if df is None: continue
+                price=float(df['Close'].iloc[-1])
+                m,r,t = detect_all(df)
+                found = (m['sim']>=55) or (r['sim']>=75) or (t['sim']>=70)
+                if found:
+                    p=generate_vertical_chart(df,m,r,t,tf,price)
+                    txt=f"[{tf}] ภูเขา {m['sim']:.0f} {m['perc']:.0f}% \nPrice {price:.2f}\n{m['start']:.2f} -> {m['end']:.2f} -> {price:.2f} สูง {m['perc']:.3f}% เหมือน {m['sim']:.0f}% [OANDA]"
+                    send_line_image(txt,p,tf)
+                time.sleep(10)
         except Exception as e:
             log(f"Loop err {e}")
-        time.sleep(120)
+        time.sleep(60)
 
-threading.Thread(target=bot_loop, daemon=True).start()
+threading.Thread(target=loop, daemon=True).start()
 
-if __name__=="__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",10000)))
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
