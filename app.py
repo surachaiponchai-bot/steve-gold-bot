@@ -11,8 +11,8 @@ def log(msg):
 def send_line(msg):
     try:
         import requests
-        token = os.environ.get("LINE_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
-        user_id = os.environ.get("LINE_USER_ID") or os.environ.get("LINE_USER_ID_TO") or os.environ.get("USER_ID")
+        token = os.environ.get("LINE_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_TOKEN") or os.environ.get("LINE_ACCESS_TOKEN")
+        user_id = os.environ.get("LINE_USER_ID") or os.environ.get("LINE_USER_ID_TO") or os.environ.get("USER_ID") or os.environ.get("LINE_TO")
         print(f"LINE config token exists={bool(token)} user_id exists={bool(user_id)}", flush=True)
         if not token: 
             return "No LINE_TOKEN"
