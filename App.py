@@ -175,7 +175,7 @@ def serve_chart(filename):
 @app.route('/home')
 def home2(): 
     # auto generate if missing
-    for tf in ["1m","5m","15m","30m"]:
+    for tf in ["5m"]:
         path = f"{CHART_DIR}/chart_{tf}.png"
         if not os.path.exists(path):
             try:
@@ -186,8 +186,8 @@ def home2():
                     generate_vertical_chart(df,m,r,t,tf,price)
             except Exception as e:
                 log(f"home gen {tf} err {e}")
-    html="<html><body style='background:black;color:white'><h1>Vertical iPhone 17 Pro Max Charts (1290x2796)</h1>"
-    for tf in ["1m","5m","15m","30m"]:
+    html="<html><body style='background:black;color:white'><h1>M5 Only - 3 Moves Vertical iPhone 17 Pro Max</h1>"
+    for tf in ["5m"]:
         html+=f"<h2>{tf}</h2><img src='/chart_{tf}.png?v={int(time.time())}' style='width:350px;border:1px solid #333'><br>"
     html+=f"<br><a href='/test_line' style='color:cyan;font-size:20px'>กด TEST ส่งเข้า LINE แนวตั้ง iPhone</a>"
     html+="</body></html>"
@@ -215,7 +215,7 @@ def loop():
     time.sleep(5)
     while True:
         try:
-            for tf in ["1m","5m","15m","30m"]:
+            for tf in ["5m"]:
                 df=fetch_yahoo(tf)
                 if df is None: continue
                 price=float(df['Close'].iloc[-1])
