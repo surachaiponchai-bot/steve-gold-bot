@@ -26,6 +26,8 @@ last_result = {"time": "never", "similarity": 0, "status": "starting"}
 def bot_loop():
     global last_result
     print("Bot loop started - checking every", CHECK_INTERVAL_MINUTES, "min")
+    # wait a bit for Flask to start
+    time.sleep(10)
     while True:
         try:
             df = fetch_gold_data(symbol="GC=F", period="2d", interval="5m")
@@ -48,18 +50,18 @@ def bot_loop():
             if result['found'] and result['similarity'] >= PATTERN_THRESHOLD:
                 chart_path = f"/tmp/chart_53_{datetime.now().strftime('%Y%m%d_%H%M')}.png"
                 generate_chart_image_53(df_53, chart_path, result)
-                msg = f"""\U0001f3d4\ufe0f Steve Gold - \u0e20\u0e39\u0e40\u0e02\u0e32 53 \u0e41\u0e17\u0e48\u0e07 \u0e1e\u0e1a! (Cloud)
+                msg = f"""🏔️ Steve Gold - ภูเขา 53 \u0e41\u0e17\u0e48\u0e07 \u0e1e\u0e1a! (Cloud)
 
-\u0e04\u0e27\u0e32\u0e21\u0e40\u0e2b\u0e21\u0e37\u0e2d\u0e19: {result['similarity']:.0f}% (\u0e40\u0e1b\u0e49\u0e32 {PATTERN_THRESHOLD}%)
+ความเหมือน: {result['similarity']:.0f}% (เป้า {PATTERN_THRESHOLD}%)
 Price: ${current_price:.2f}
 Time: {datetime.now().strftime('%d/%m/%Y %H:%M')}
-\u0e20\u0e39\u0e40\u0e02\u0e32: {result['valley1']:.2f} -> {result['peak']:.2f} -> {result['valley2']:.2f}
-\u0e2a\u0e39\u0e07: {result['height_pct']:.3f}%
+ภูเขา: {result['valley1']:.2f} -> {result['peak']:.2f} -> {result['valley2']:.2f}
+สูง: {result['height_pct']:.3f}%
 Corr: {result.get('correlation',0):.0f}% peak@{result.get('peak_position',-1)}
 
-Cloud bot \u0e15\u0e23\u0e27\u0e08 53 \u0e41\u0e17\u0e48\u0e07\u0e1b\u0e31\u0e08\u0e08\u0e38\u0e1a\u0e31\u0e19\u0e40\u0e1b\u0e47\u0e19\u0e20\u0e39\u0e40\u0e02\u0e32!
+Cloud bot ตรวจ 53 \u0e41\u0e17\u0e48\u0e07\u0e1b\u0e31\u0e08\u0e08\u0e38\u0e1a\u0e31\u0e19\u0e40\u0e1b\u0e47\u0e19ภูเขา!
 
-Signal: BUY/SELL \u0e15\u0e32\u0e21\u0e10\u0e32\u0e19"""
+Signal: BUY/SELL ตามฐาน"""
                 print("SENDING ALERT to LINE...")
                 send_line_text_and_image(msg, chart_path)
             time.sleep(CHECK_INTERVAL_MINUTES*60)
@@ -91,15 +93,17 @@ def home():
 @app.route("/test", methods=['GET', 'POST'])
 def test_alert():
     try:
-        msg = f"\U0001f9ea Test from Cloud Bot - {datetime.now().strftime('%H:%M:%S')} - Token OK: {bool(LINE_CHANNEL_TOKEN)} Price check OK"
+        msg = f"🧪 Test from Cloud Bot - {datetime.now().strftime('%H:%M:%S')} - Token OK: {bool(LINE_CHANNEL_TOKEN)} Price check OK"
         from line_sender import send_line_text
         send_line_text(msg)
         return f"Test sent! Token len {len(LINE_CHANNEL_TOKEN)}"
     except Exception as e:
         return f"Error: {e}"
 
+# START BOT LOOP IMMEDIATELY FOR RENDER GUNICORN
+t = threading.Thread(target=bot_loop, daemon=True)
+t.start()
+
 if __name__ == "__main__":
-    t = threading.Thread(target=bot_loop, daemon=True)
-    t.start()
     port = int(os.getenv("PORT", "10000"))
     app.run(host="0.0.0.0", port=port)
