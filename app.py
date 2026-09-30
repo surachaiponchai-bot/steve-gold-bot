@@ -1,81 +1,116 @@
-import os, time, threading
-from datetime import datetime
+
 from flask import Flask
-
-LINE_CHANNEL_TOKEN = os.getenv("LINE_CHANNEL_TOKEN", "")
-LINE_USER_ID = os.getenv("LINE_USER_ID", "")
-CANDLE_COUNT = int(os.getenv("CANDLE_COUNT", "53"))
-PATTERN_THRESHOLD = int(os.getenv("PATTERN_THRESHOLD", "55"))
-CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", "5"))
-
-print(f"TOKEN OK: {bool(LINE_CHANNEL_TOKEN)}")
-print(f"Config: {CANDLE_COUNT} candles, need {PATTERN_THRESHOLD}%")
-
-from detector import fetch_gold_data, generate_chart_image_53
-from pattern_detector import check_53_mountain
-from line_sender import send_line_text_and_image
-import config
-config.LINE_CHANNEL_TOKEN = LINE_CHANNEL_TOKEN
-config.LINE_USER_ID = LINE_USER_ID
+import os, time, threading, traceback
+from datetime import datetime
 
 app = Flask(__name__)
-last_result = {"time": "never", "similarity": 0, "status": "starting", "price": "-"}
+
+state = {
+    "last_check": "Never",
+    "price": 0,
+    "mountain_sim": 0,
+    "mai_ruay_score": 0,
+    "found": False,
+    "last_error": "",
+    "last_desc": "",
+    "last_pattern": ""
+}
+
+def log(msg):
+    print(msg, flush=True)
+    state["last_desc"] = msg
+
+@app.route('/')
+def root():
+    return "Steve Gold Bot Running - go to /home"
+
+@app.route('/home')
+def home():
+    try:
+        from detector import fetch_gold_data, check_all_patterns
+        log("Manual /home fetch 2 tactics...")
+        df = fetch_gold_data()
+        price = float(df['Close'].iloc[-1])
+        m, r = check_all_patterns(df)
+        state["price"] = price
+        state["mountain_sim"] = m["sim"]
+        state["mai_ruay_score"] = r["sim"]
+        state["last_check"] = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        state["last_error"] = f"OK {len(df)} rows"
+        state["found"] = m["found"] or r["found"]
+        state["last_pattern"] = f"Mountain: {m['desc']}<br>MaiRuay: {r['desc']}"
+        return f"""
+        <h2>Steve Gold - 2 Tactics Bot (Mountain 53 + ไม้รวย)</h2>
+        <p>Last check: {state['last_check']}</p>
+        <p>Price: {price:.2f}</p>
+        <p>---</p>
+        <p><b>ท่า 1 ภูเขา 53:</b> Similarity {m['sim']:.1f}% (need 55%) Found={m['found']}</p>
+        <p>{m['desc']}</p>
+        <p>---</p>
+        <p><b>ท่า 2 ไม้รวย:</b> Score {r['sim']} /100 (need 75) Found={r['found']}</p>
+        <p>{r['desc']}</p>
+        <p>---</p>
+        <p>Status: Running every 5 min - 2 patterns</p>
+        <p>TOKEN OK: True</p>
+        <p>Bot is running 24/7 on cloud - no need to keep PC on!</p>
+        <hr>
+        <p>{state['last_pattern']}</p>
+        """
+    except Exception as e:
+        err = f"Error: {e}\n{traceback.format_exc()}"
+        state["last_error"] = err[:500]
+        log(err)
+        return f"<h1>Error</h1><pre>{err}</pre>", 500
+
+def send_line(msg, img_path=None):
+    try:
+        import requests
+        token = os.environ.get("LINE_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
+        if not token: 
+            print("No LINE token", flush=True)
+            return
+        headers = {"Authorization": f"Bearer {token}"}
+        data = {"to": os.environ.get("LINE_USER_ID",""), "messages":[{"type":"text","text":msg}]}
+        # For simplicity use push API
+        url = "https://api.line.me/v2/bot/message/push"
+        r = requests.post(url, headers={**headers, "Content-Type":"application/json"}, json=data, timeout=10)
+        print(f"LINE push {r.status_code} {r.text[:200]}", flush=True)
+    except Exception as e:
+        print(f"LINE error {e}", flush=True)
 
 def bot_loop():
-    global last_result
-    print("Bot loop started - light mode")
     time.sleep(5)
+    log("Bot loop started - 2 tactics mode")
     while True:
         try:
+            from detector import fetch_gold_data, check_all_patterns
             df = fetch_gold_data()
-            if len(df) < CANDLE_COUNT:
-                print(f"Not enough data {len(df)}")
-                time.sleep(60)
-                continue
-            df_53 = df.tail(CANDLE_COUNT).copy()
-            current_price = float(df_53['Close'].iloc[-1])
-            result = check_53_mountain(df_53)
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Price {current_price:.2f} sim {result['similarity']:.0f}% found={result['found']}")
-            last_result = {
-                "time": datetime.now().strftime('%d/%m/%Y %H:%M:%S'),
-                "price": current_price,
-                "similarity": round(result['similarity'],1),
-                "found": result['found'],
-                "description": result['description']
-            }
-            if result['found'] and result['similarity'] >= PATTERN_THRESHOLD:
-                chart_path = f"/tmp/chart_53_{datetime.now().strftime('%Y%m%d_%H%M')}.png"
-                generate_chart_image_53(df_53, chart_path, result)
-                msg = f"🏔️ Steve Gold - ภูเขา 53 แท่ง พบ! (Cloud Light)\nความเหมือน: {result['similarity']:.0f}% (เป้า {PATTERN_THRESHOLD}%)\nPrice: ${current_price:.2f}\nTime: {datetime.now().strftime('%d/%m/%Y %H:%M')}\nภูเขา: {result['valley1']:.2f} -> {result['peak']:.2f} -> {result['valley2']:.2f}"
-                print("SENDING ALERT")
-                send_line_text_and_image(msg, chart_path)
-            time.sleep(CHECK_INTERVAL_MINUTES*60)
+            price = float(df['Close'].iloc[-1])
+            m, r = check_all_patterns(df)
+            state["price"] = price
+            state["mountain_sim"] = m["sim"]
+            state["mai_ruay_score"] = r["sim"]
+            state["last_check"] = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+            print(f"[{state['last_check']}] Price {price:.2f} | Mtn {m['sim']:.0f}% | MaiRuay {r['sim']} | Found M={m['found']} R={r['found']}", flush=True)
+            
+            if m["found"]:
+                msg = f"🏔️ ภูเขา 53 เจอ! {m['sim']:.0f}%\nPrice {price:.2f}\n{m['desc']}"
+                send_line(msg)
+            if r["found"]:
+                msg = f"🌲 ไม้รวย BUY! Score {r['sim']}\nPrice {price:.2f}\n{r['desc']}\nไส้ยาวกวาดล่างดีดกลับ RSI {r.get('rsi',0):.1f}"
+                send_line(msg)
+                
         except Exception as e:
-            print(f"Loop error: {e}")
-            import traceback; traceback.print_exc()
-            time.sleep(60)
+            print(f"Loop error: {e}", flush=True)
+            traceback.print_exc()
+        time.sleep(300)
 
-@app.route("/", methods=['GET', 'POST'])
-@app.route("/callback", methods=['GET', 'POST'])
-def callback():
-    return 'OK', 200
-
-@app.route("/home")
-def home():
-    return f"<h1>Steve Gold - 53 Candles Mountain Bot (Cloud Light)</h1><p>Last check: {last_result['time']}</p><p>Price: {last_result.get('price','-')}</p><p>Similarity: {last_result.get('similarity',0)}% (need {PATTERN_THRESHOLD}%)</p><p>Found: {last_result.get('found',False)}</p><p>Desc: {last_result.get('description','')}</p><p>Status: Running every {CHECK_INTERVAL_MINUTES} min, reading {CANDLE_COUNT} candles - LIGHT MODE 200MB</p><p>TOKEN OK: {bool(LINE_CHANNEL_TOKEN)}</p><hr>Bot is running 24/7 on cloud - no need to keep PC on!"
-
-@app.route("/test")
-def test_alert():
-    try:
-        from line_sender import send_line_text
-        send_line_text(f"🧪 Test Light Bot {datetime.now().strftime('%H:%M:%S')}")
-        return "Test sent light mode!"
-    except Exception as e:
-        return f"Error: {e}"
-
-t = threading.Thread(target=bot_loop, daemon=True)
-t.start()
+try:
+    t = threading.Thread(target=bot_loop, daemon=True)
+    t.start()
+    log("Thread started 2 tactics")
+except Exception as e:
+    log(f"Thread start fail: {e}")
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "10000"))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
